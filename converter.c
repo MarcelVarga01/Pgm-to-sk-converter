@@ -44,7 +44,8 @@ void ReinitPos(unsigned char commands[PNO], bool draw) {
   commands[5] = 0x85;
   if(draw)
     commands[6] = 0x81;
-  else commands[6] = 0x80;
+  else 
+    commands[6] = 0x80;
   commands[7] = 0x40;
 }
 
