@@ -4,31 +4,24 @@
 #include <stdbool.h>
 #define H 200
 #define W 200
-#define CMDNO 13
+//number of commands for setting colour, position
+#define CNO 7
+#define PNO 8
 
 //-----------------------------------------------------------------------------------------------------
 //Helper functions
 
-//reinitialize the commands
+// Reinitialize the Colour Commands
 // commands [0] -> [5] is for DATA commands
 // commands [6] is for Colour command
-// commands [7],[8] are for DATA, targetX
-// commands [9],[10] are for DATA, targetY
-// commands [11] is for TOOL BLOCK command
-// commands [12] is for DY command
-void reinitialize(unsigned char commands[CMDNO]) {
+void ReinitColour(unsigned char commands[CNO]) {
   for(int i = 0; i < 4; i++) commands[i] = 0xC0;
   commands[4] = 0xC3;
   commands[5] = 0xFF;
   commands[6] = 0x83;
-  commands[7] = 0xC0;
-  commands[8] = 0x84;
-  commands[9] = 0xC0;
-  commands[10] = 0x85;
-  commands[11] = 0x82;
-  commands[12] = 0x60;
 }
-void ChangeColour(unsigned char commands[CMDNO], unsigned char colour) {
+// Change Colour commands to make s -> data store the colour of the pixel
+void ChangeColour(unsigned char commands[], unsigned char colour) {
   commands[0] = commands[0] | (colour >> 6);
   commands[1] = commands[1] | colour;
   commands[2] = commands[2] | (colour >> 2);
@@ -36,8 +29,31 @@ void ChangeColour(unsigned char commands[CMDNO], unsigned char colour) {
   commands[4] = commands[4] | (colour << 2);
 }
 
-void ChangeTxTy(unsigned char commands[CMDNO], int x, int y) {
-  commands[7] = 
+// Reinitialize the Position commands
+// commands [0], [1], [2] are for 2 x DATA, targetX
+// commands [3], [4], [5] are for 2 x DATA, targetY
+// command [6] is for TOOL LINE / NONE
+// command [7] is for DY
+void ReinitPos(unsigned char commands[PNO], bool draw) {
+  commands[0] = 0xC0;
+  commands[1] = 0xC0;
+  commands[2] = 0x84;
+
+  commands[3] = 0xC0;
+  commands[4] = 0xC0;
+  commands[5] = 0x85;
+  if(draw)
+    commands[6] = 0x81;
+  else commands[6] = 0x80;
+  commands[7] = 0x40;
+}
+
+// Change Draw commands to set tx and ty to current x and y
+void ChangePos(unsigned char commands[PNO], int x, int y) {
+  commands[0] = commands[0] | (x >> 6);
+  commands[1] = commands[1] | x;
+  commands[3] = commands[3] | (y >> 6);
+  commands[4] = commands[4] | y;
 }
 // Checks the header of the file
 // Program only works for 200 x 200 files with maximum gray value of 255
@@ -61,10 +77,16 @@ void GetName(char out[50], const char in[50]) {
 //-----------------------------------------------------------------------------------------------------
 // Read/Write functions
 
-void read(unsigned char image[H][W], FILE *in) {
+void read(unsigned char image[H][W], char *file) {
+  FILE *in = fopen(file, "rb");
+  int len = strlen(file);
+
+  if (in == NULL || strcmp(file + len - 4, ".pgm")) {
+    printf("Please use an existing .pgm file\n");
+    exit(1);
+    }
   char line[50];
   fgets(line, 50, in);
-  printf("%s",line);
 
   if (! FileOk(line)) {
     fclose(in);
@@ -73,7 +95,7 @@ void read(unsigned char image[H][W], FILE *in) {
   }
   for (int i = 0; i < H; i++)
     for (int j = 0; j < W; j++)
-  image[i][j] = fgetc(in);
+      image[j][i] = fgetc(in);
 
 
   fclose(in);
@@ -86,14 +108,27 @@ void write(unsigned char image[H][W], char filename[50]) {
 		printf("Cannot write file %s", filename);
 		exit(1);
 	}
-  unsigned char newdraw[CMDNO]; 
+  unsigned char ColourCMDS[CNO]; 
+  unsigned char DrawCMDS[PNO];
+  unsigned char NewLineCMDS[10];
 
   for (int i = 0; i < H; i++)
     for (int j = 0; j < W; j++){
-      reinitialize(newdraw);
-      ChangeColour(newdraw, image[i][j]);
-      ChangeTxTy(newdraw, i, j);
-      fwrite(newdraw, 1, CMDNO, ofp);
+      if (j == 0 || image[i][j-1] != image[i][j]) {
+        ReinitColour(ColourCMDS);
+        ChangeColour(ColourCMDS, image[i][j]);
+        fwrite(ColourCMDS, 1, CNO, ofp);
+        }
+      if (j == 0) {
+        ReinitPos(NewLineCMDS, 0);
+        ChangePos(NewLineCMDS, i, 0);
+        fwrite(NewLineCMDS, 1, PNO, ofp);
+      }
+      if (j == W - 1 || image[i][j+1] != image[i][j]) {
+        ReinitPos(DrawCMDS, 1);
+        ChangePos(DrawCMDS, i, j);
+        fwrite(DrawCMDS, 1, PNO, ofp);
+      }
   }
 }
 
@@ -130,21 +165,36 @@ void testGetName() {
 
 }
 void testChangeColour() {
-  unsigned char test[CMDNO];
-  reinitialize(test);
+  unsigned char test[CNO];
+  ReinitColour(test);
   ChangeColour(test,0);
   assert(__LINE__, (test[0] == 0xC0 && test[1] == 0xC0 && test[2] == 0xC0 && test[3] == 0xC0 && test[4] == 0xC3 && test[5] == 0xFF)); 
-  reinitialize(test);
+  ReinitColour(test);
   ChangeColour(test,0xFF);
   assert(__LINE__, (test[0] == 0xC3 && test[1] == 0xFF && test[2] == 0xFF && test[3] == 0xFF && test[4] == 0xFF && test[5] == 0xFF));
-  reinitialize(test);
+  ReinitColour(test);
   ChangeColour(test,0xAA);
   assert(__LINE__, (test[0] == 0xC2 && test[1] == 0xEA && test[2] == 0xEA && test[3] == 0xEA && test[4] == 0xEB && test[5] == 0xFF));
+}
+void testChangePos() {
+  unsigned char test[PNO];
+  ReinitPos(test, 1);
+  ChangePos(test, 0, 0);
+  assert(__LINE__, (test[0] == 0xC0 && test[1] == 0xC0 && test[3] == 0xC0 && test[4] == 0xC0));
+  ReinitPos(test, 1);
+  ChangePos(test, 199, 199);
+  assert(__LINE__, (test[0] == 0xC3 && test[1] == 0xC7 && test[2] ==0x84 && test[3] ==0xC3 && test[4] == 0xC7 && test[5] == 0x85 && test[6] == 0x81 && test[7] == 0x40));
+  ReinitPos(test, 1);
+  assert(__LINE__, (test[0] == 0xC0 && test[1] == 0xC0 && test[2] ==0x84 && test[3] ==0xC0 && test[4] == 0xC0 && test[5] == 0x85 && test[6] == 0x81 && test[7] == 0x40));
+  ChangePos(test, 64, 89);
+  assert(__LINE__, (test[0] == 0xC1 && test[1] == 0xC0 && test[2] ==0x84 && test[3] ==0xC1 && test[4] == 0xD9 && test[5] == 0x85 && test[6] == 0x81 && test[7] == 0x40));
+
 }
 void test() {
   testfile();
   testGetName();
   testChangeColour();
+  testChangePos();
   printf("All tests pass\n");
 }
 
@@ -153,14 +203,8 @@ int main(int n, char *args[]){
   case 1 : test(); break;
   }
   if(n == 2){
-  FILE *in = fopen(args[1], "rb");
-  int len = strlen(args[1]);
-  if (in == NULL || strcmp(args[1]+ len - 4, ".pgm")) {
-  printf("Please use a .pgm file\n");
-  exit(1);
-  }
   unsigned char image[H][W];
-  read(image, in);
+  read(image, args[1]);
 //  for(int i = 0; i < H; i++) {
 //  for(int j = 0; j < W; j++)
 //  printf("%x ",image[i][j]);
@@ -169,6 +213,7 @@ int main(int n, char *args[]){
   char filename[50];
   GetName(filename, args[1]);
   write(image, filename);
+  printf("File %s has been written.\n", filename);
   }
   return 0;
 }
